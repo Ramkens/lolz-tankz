@@ -1,74 +1,133 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tankz — live forum tank battle</title>
   <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="/assets/tanks/tank_red.png" type="image/png" />
 </head>
-<body class="landing">
-  <main class="container">
-    <header class="hero">
-      <h1>Tankz</h1>
-      <p class="lede">Real-time 2D tank battle controlled by forum posts on <a href="https://lolz.live" target="_blank" rel="noopener">lolz.live</a>.</p>
-    </header>
+<body>
+  <div id="app">
+    <canvas id="game" width="1600" height="1000"></canvas>
 
-    <section class="card" id="games-card">
-      <div class="row">
-        <h2>Active games</h2>
-        <button id="refresh-games" class="ghost">Refresh</button>
+    <!-- Top bar: round timer & meta -->
+    <div class="hud hud-top">
+      <div class="hud-pill" id="round-pill">
+        <span class="label">Раунд</span>
+        <span class="value" id="round-num">—</span>
       </div>
-      <ul id="games-list" class="games-list"></ul>
-      <p id="no-games" class="muted" hidden>No games yet. Wait for the admin to create one.</p>
-    </section>
-
-    <section class="card" id="admin-card">
-      <div class="row">
-        <h2>Admin</h2>
-        <span id="admin-status" class="pill"></span>
+      <div class="hud-pill" id="timer-pill">
+        <span class="label">До конца</span>
+        <span class="value" id="round-timer">—</span>
       </div>
-      <form id="admin-login-form" class="form">
-        <label>Admin password
-          <input type="password" name="password" required autocomplete="current-password" />
-        </label>
-        <button class="primary" type="submit">Sign in</button>
-        <p id="admin-login-error" class="error" hidden></p>
-      </form>
-      <form id="create-game-form" class="form" hidden>
-        <fieldset class="modes">
-          <label><input type="radio" name="mode" value="classic" checked /> Classic — every tank for themselves</label>
-          <label><input type="radio" name="mode" value="team" /> Teams — red vs blue (odd player → random side)</label>
-        </fieldset>
-        <label>Lolz thread (id or URL)
-          <input type="text" name="thread" placeholder="e.g. https://lolz.live/threads/9991149/" required />
-        </label>
-        <label class="checkbox">
-          <input type="checkbox" name="announce" checked />
-          Auto-post game link &amp; commands to the thread
-        </label>
-        <button class="primary" type="submit">Create game</button>
-        <button type="button" class="ghost" id="admin-logout">Sign out</button>
-        <p id="create-game-error" class="error" hidden></p>
-      </form>
-    </section>
+      <div class="hud-pill mode-pill" id="mode-pill">
+        <span class="label">Режим</span>
+        <span class="value" id="mode-name">—</span>
+      </div>
+      <div class="hud-pill" id="thread-pill">
+        <span class="label">Тема</span>
+        <a class="value" id="thread-link" href="#" target="_blank" rel="noopener">—</a>
+      </div>
+      <button id="mute-btn" class="hud-btn" title="Звук">🔊</button>
+      <button id="open-admin-btn" class="hud-btn" title="Админ">⚙</button>
+    </div>
 
-    <section class="card">
-      <h2>How it works</h2>
-      <ol>
-        <li>Admin creates a game tied to a forum thread on lolz.live.</li>
-        <li>Players post commands in that thread:
-          <ul>
-            <li><code>!join</code> (or <code>!join red</code> / <code>!join blue</code> in team mode)</li>
-            <li><code>!goto B8</code> — drive to a cell</li>
-            <li><code>!shot A1</code> — fire toward a cell</li>
-            <li><code>!leave</code> — remove your tank</li>
-          </ul>
-        </li>
-        <li>Tanks appear with the player's lolz nickname and avatar.</li>
-        <li>Spectators watch the battle live on the game page.</li>
-      </ol>
-    </section>
-  </main>
-  <script src="/landing.js"></script>
+    <!-- Right side: scoreboard -->
+    <aside class="hud hud-right" id="scoreboard">
+      <h3>Топ игроков</h3>
+      <ol id="scoreboard-list"></ol>
+      <p class="muted small">Киллы за всю сессию.</p>
+    </aside>
+
+    <!-- Left side: live event log -->
+    <aside class="hud hud-left" id="events">
+      <h3>События</h3>
+      <ul id="event-list"></ul>
+    </aside>
+
+    <!-- Bottom-center: command hint -->
+    <div class="hud hud-bottom">
+      <div class="cmd-hints">
+        <code>!join</code>
+        <code>!goto B8</code>
+        <code>!shot A1</code>
+        <code>!leave</code>
+      </div>
+      <div class="thread-cta" id="thread-cta">
+        <span>пиши команды в теме lolz:</span>
+        <a href="#" id="thread-link-bottom" target="_blank" rel="noopener">—</a>
+      </div>
+    </div>
+
+    <!-- Center overlay: winner / "next round" / starting -->
+    <div id="overlay" class="overlay" hidden>
+      <div class="overlay-card" id="overlay-card">
+        <div class="overlay-kicker" id="overlay-kicker">RAUND</div>
+        <h2 id="overlay-title">—</h2>
+        <p id="overlay-sub" class="muted">—</p>
+      </div>
+    </div>
+
+    <!-- Admin drawer -->
+    <div id="admin-drawer" class="admin-drawer" hidden>
+      <header>
+        <h2>Админ</h2>
+        <button id="close-admin" class="hud-btn">✕</button>
+      </header>
+
+      <section id="admin-login-section" class="admin-section">
+        <h3>Вход</h3>
+        <form id="admin-login-form">
+          <input type="password" name="password" placeholder="Пароль админа" autocomplete="current-password" required />
+          <button type="submit" class="primary">Войти</button>
+          <p id="admin-login-error" class="error" hidden></p>
+        </form>
+      </section>
+
+      <section id="admin-panel-section" class="admin-section" hidden>
+        <h3>Тема lolz</h3>
+        <form id="admin-thread-form">
+          <input type="text" name="thread" id="admin-thread-input" placeholder="URL или ID темы" />
+          <button class="primary" type="submit">Привязать</button>
+        </form>
+        <button class="ghost full" id="announce-game-btn">Запостить шапку в тему</button>
+
+        <h3>Раунд</h3>
+        <div class="row gap">
+          <button id="end-round-btn" class="ghost">Завершить раунд</button>
+          <button id="reset-scoreboard-btn" class="ghost">Сбросить scoreboard</button>
+        </div>
+
+        <h3>Настройки</h3>
+        <form id="admin-settings-form" class="settings-form">
+          <label>Режим
+            <select name="mode">
+              <option value="classic">Классика</option>
+              <option value="team">Команды (red vs blue)</option>
+            </select>
+          </label>
+          <label>HP старт <input type="number" name="startingHp" min="1" max="20" /></label>
+          <label>Скорость танка (клеток/сек) <input type="number" step="0.1" name="tankSpeed" min="0.5" max="10" /></label>
+          <label>Скорость снаряда (клеток/сек) <input type="number" step="0.1" name="projectileSpeed" min="1" max="20" /></label>
+          <label>Кулдаун выстрела (мс) <input type="number" step="100" name="shotCooldownMs" min="100" max="10000" /></label>
+          <label>Респаун (мс) <input type="number" step="500" name="respawnMs" min="500" max="60000" /></label>
+          <label>Длина раунда (сек) <input type="number" step="10" name="roundMs" min="30" max="3600" /></label>
+          <label>Пауза между раундами (сек) <input type="number" step="1" name="breakMs" min="3" max="120" /></label>
+          <label class="checkbox"><input type="checkbox" name="obstacles" /> Препятствия на карте</label>
+          <button class="primary" type="submit">Сохранить</button>
+          <p id="admin-settings-error" class="error" hidden></p>
+        </form>
+
+        <h3>Игроки на поле</h3>
+        <ul id="admin-players"></ul>
+
+        <button id="admin-logout-btn" class="ghost full">Выйти</button>
+      </section>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/game.js"></script>
 </body>
 </html>

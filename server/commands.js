@@ -2,7 +2,9 @@
 // multiple commands on separate lines. Returns an array of command objects.
 import { parseCell } from './game.js';
 
-const COMMAND_RE = /(^|[\s>])!(join|leave|goto|move|shot|shoot|fire|color)\b([^\n\r]*)/gi;
+const COMMAND_RE = /(^|[\s>])!(join|leave|goto|move|shot|shoot|fire|color|colour)\b([^\n\r]*)/gi;
+
+const COLOR_NAMES = new Set(['red', 'green', 'blue', 'black', 'beige']);
 
 export function extractCommands(text, gridSize) {
   if (!text) return [];
@@ -22,8 +24,8 @@ function normalize(verb, rest, gridSize) {
   if (verb === 'join') {
     let team = null;
     const t = rest.toLowerCase();
-    if (t.includes('red') || t.includes('кр')) team = 'red';
-    else if (t.includes('blue') || t.includes('син')) team = 'blue';
+    if (/\bred\b|кр\w*/i.test(t)) team = 'red';
+    else if (/\bblue\b|син\w*/i.test(t)) team = 'blue';
     return { type: 'join', team };
   }
   if (verb === 'leave') return { type: 'leave' };
@@ -37,9 +39,9 @@ function normalize(verb, rest, gridSize) {
     if (!cell) return null;
     return { type: 'shot', col: cell.col, row: cell.row };
   }
-  if (verb === 'color') {
-    const c = rest.trim().replace(/^#/, '');
-    if (/^[0-9a-fA-F]{6}$/.test(c)) return { type: 'color', color: '#' + c.toLowerCase() };
+  if (verb === 'color' || verb === 'colour') {
+    const c = rest.trim().toLowerCase().replace(/^#/, '');
+    if (COLOR_NAMES.has(c)) return { type: 'color', color: c };
     return null;
   }
   return null;

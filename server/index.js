@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser';
 import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'node:crypto';
 
-import { Game, TICK_MS } from './game.js';
+import { Match, TICK_MS, formatCell } from './game.js';
 import { makeLolzClient, parseThreadId } from './lolz.js';
 import { Poller } from './poller.js';
 
@@ -15,6 +15,8 @@ const PORT = Number(process.env.PORT || 3000);
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const LOLZ_TOKEN = process.env.LOLZ_API_TOKEN || '';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
+// Default forum thread to bind the perpetual match to on startup (optional).
+const DEFAULT_THREAD = process.env.LOLZ_THREAD || '';
 
 if (!ADMIN_PASSWORD) console.warn('[warn] ADMIN_PASSWORD is not set');
 if (!LOLZ_TOKEN) console.warn('[warn] LOLZ_API_TOKEN is not set; lolz polling disabled');
@@ -24,27 +26,62 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET ||
 
 const lolz = LOLZ_TOKEN ? makeLolzClient(LOLZ_TOKEN) : null;
 
-const games = new Map();
-const poller = lolz ? new Poller({ lolz, games, log: (...a) => console.log('[poller]', ...a) }) : null;
+// --- the one Match ---
+const match = new Match({
+  threadId: DEFAULT_THREAD ? parseThreadId(DEFAULT_THREAD) : null,
+  threadUrl: DEFAULT_THREAD ? (parseThreadId(DEFAULT_THREAD) ? `https://lolz.live/threads/${parseThreadId(DEFAULT_THREAD)}/` : null) : null,
+});
+
+const poller = lolz ? new Poller({ lolz, match, log: (...a) => console.log('[poller]', ...a) }) : null;
 if (poller) poller.start();
 
-// Game tick loop
-setInterval(() => {
-  const now = Date.now();
-  for (const game of games.values()) {
-    if (game.status === 'running') game.tick(now);
-  }
-}, TICK_MS);
+// Tick loop
+setInterval(() => match.tick(Date.now()), TICK_MS);
 
+// Watch for round transitions, announce winners on the forum.
+let lastRoundAnnounced = 0;
+setInterval(async () => {
+  if (!lolz || !match.threadId) return;
+  if (match.phase === 'break' && match.roundNumber !== lastRoundAnnounced && match.lastWinner) {
+    lastRoundAnnounced = match.roundNumber;
+    const w = match.lastWinner;
+    const body = composeRoundAnnounce(match.roundNumber, w);
+    try {
+      await lolz.createPost(match.threadId, body);
+    } catch (e) {
+      console.warn('[announce] failed:', e.message);
+    }
+  }
+}, 1000);
+
+function composeRoundAnnounce(round, winner) {
+  if (winner.kind === 'team') {
+    return `[B]:fed: Раунд ${round} — Победила команда ${winner.name.toUpperCase()}![/B]\n` +
+           `Киллы команды: [B]${winner.kills}[/B]\n\n` +
+           `Следующий раунд через 15 сек. Команды: !join red / !join blue / !goto B8 / !shot A1`;
+  }
+  if (winner.kind === 'player') {
+    return `[B]:fed: Раунд ${round} — Победитель: ${winner.name}![/B]\n` +
+           `Киллов: [B]${winner.kills}[/B]\n\n` +
+           `Следующий раунд через 15 сек. Команды: !join / !goto B8 / !shot A1`;
+  }
+  return `[B]Раунд ${round} — ничья[/B]\nСледующий раунд через 15 сек.`;
+}
+
+// --- HTTP ---
 const app = express();
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders(res, p) {
+    // Long-cache assets, but never the entry HTML (avoid stale UI after deploys).
+    if (p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
 function isAdmin(req) {
   return req.cookies && req.cookies.admin === ADMIN_SECRET;
 }
-
 function requireAdmin(req, res, next) {
   if (!isAdmin(req)) return res.status(401).json({ error: 'admin only' });
   next();
@@ -72,124 +109,109 @@ app.get('/api/admin/status', (req, res) => {
   res.json({ admin: isAdmin(req), hasLolz: Boolean(lolz) });
 });
 
-app.get('/api/games', (req, res) => {
-  const list = [...games.values()].map(g => ({
-    id: g.id,
-    mode: g.mode,
-    status: g.status,
-    threadId: g.threadId,
-    threadUrl: g.threadUrl,
-    players: g.players.size,
-    createdAt: g.createdAt,
-    startedAt: g.startedAt,
-    finishedAt: g.finishedAt,
-    winnerText: g.winnerText,
-  }));
-  list.sort((a, b) => b.createdAt - a.createdAt);
-  res.json({ games: list });
+app.get('/api/state', (req, res) => {
+  res.json({ match: match.serialize(), admin: isAdmin(req) });
 });
 
-app.get('/api/games/:id', (req, res) => {
-  const g = games.get(req.params.id);
-  if (!g) return res.status(404).json({ error: 'not found' });
-  res.json({ game: g.serialize() });
+app.post('/api/admin/settings', requireAdmin, (req, res) => {
+  match.setSettings(req.body || {});
+  res.json({ match: match.serialize() });
 });
 
-app.post('/api/games', requireAdmin, async (req, res) => {
-  const { mode, thread, announce } = req.body || {};
-  if (mode !== 'classic' && mode !== 'team') return res.status(400).json({ error: 'mode must be classic or team' });
-  const threadId = parseThreadId(thread);
-  if (!threadId) return res.status(400).json({ error: 'thread must be a numeric id or thread url' });
-  if (!lolz) return res.status(503).json({ error: 'lolz token not configured on server' });
+app.post('/api/admin/thread', requireAdmin, async (req, res) => {
+  const { thread } = req.body || {};
+  const id = parseThreadId(thread);
+  if (!id) return res.status(400).json({ error: 'invalid thread id/url' });
+  if (!lolz) return res.status(503).json({ error: 'lolz token not configured' });
+  let info;
+  try { info = await lolz.getThread(id); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  match.setThread(id, info.links?.permalink || `https://lolz.live/threads/${id}/`);
+  res.json({ match: match.serialize() });
+});
 
-  let threadInfo;
+app.post('/api/admin/announce', requireAdmin, async (req, res) => {
+  const { body } = req.body || {};
+  if (!body) return res.status(400).json({ error: 'body required' });
+  if (!lolz || !match.threadId) return res.status(503).json({ error: 'no thread bound' });
   try {
-    threadInfo = await lolz.getThread(threadId);
+    await lolz.createPost(match.threadId, String(body).slice(0, 5000));
+    res.json({ ok: true });
   } catch (e) {
-    return res.status(400).json({ error: `Failed to load thread: ${e.message}` });
+    res.status(500).json({ error: e.message });
   }
+});
 
-  const id = makeGameId();
-  const threadUrl = threadInfo.links?.permalink || `https://lolz.live/threads/${threadId}/`;
-  const game = new Game({ id, mode, threadId, threadUrl, createdAt: Date.now() });
-  games.set(id, game);
-
-  if (announce !== false) {
-    const url = `${PUBLIC_BASE_URL}/game/${id}`;
-    const body =
-      `[B]Tankz live game started[/B] (${mode === 'classic' ? 'all vs all' : 'teams'})\n\n` +
-      `Live board: ${url}\n\n` +
-      `Commands in this thread:\n` +
-      `[LIST]\n` +
-      `[*][B]!join[/B]${mode === 'team' ? ' red / !join blue' : ''} — spawn your tank\n` +
-      `[*][B]!goto B8[/B] — drive to a cell\n` +
-      `[*][B]!shot A1[/B] — fire toward a cell\n` +
-      `[*][B]!leave[/B] — remove your tank\n` +
-      `[/LIST]\n` +
-      `Field: ${game.cols} cols (A..${String.fromCharCode(64 + game.cols)}) x ${game.rows} rows.`;
-    lolz.createPost(threadId, body).catch(e => console.warn('[announce] failed:', e.message));
+app.post('/api/admin/announce-game', requireAdmin, async (req, res) => {
+  if (!lolz || !match.threadId) return res.status(503).json({ error: 'no thread bound' });
+  const body = composeGameAnnounce(match, PUBLIC_BASE_URL);
+  try {
+    await lolz.createPost(match.threadId, body);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-
-  res.json({ game: game.serialize() });
 });
 
-app.post('/api/games/:id/start', requireAdmin, (req, res) => {
-  const g = games.get(req.params.id);
-  if (!g) return res.status(404).json({ error: 'not found' });
-  g.start();
-  res.json({ game: g.serialize() });
+app.post('/api/admin/end-round', requireAdmin, (req, res) => {
+  match.forceEndRound();
+  res.json({ match: match.serialize() });
 });
 
-app.post('/api/games/:id/stop', requireAdmin, (req, res) => {
-  const g = games.get(req.params.id);
-  if (!g) return res.status(404).json({ error: 'not found' });
-  g.stop();
-  res.json({ game: g.serialize() });
+app.post('/api/admin/reset-scoreboard', requireAdmin, (req, res) => {
+  match.resetScoreboard();
+  res.json({ match: match.serialize() });
 });
 
-app.delete('/api/games/:id', requireAdmin, (req, res) => {
-  const g = games.get(req.params.id);
-  if (!g) return res.status(404).json({ error: 'not found' });
-  g.stop();
-  games.delete(req.params.id);
-  res.json({ ok: true });
+app.post('/api/admin/kick', requireAdmin, (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  match.removePlayer(userId, 'kicked by admin');
+  res.json({ match: match.serialize() });
 });
 
-// Serve game page for /game/:id (SPA-style).
-app.get(['/game/:id', '/admin'], (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'game.html'));
+// Admin & root both serve the same SPA shell.
+app.get(['/', '/admin'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, { cors: { origin: '*' } });
 
 io.on('connection', socket => {
-  socket.on('join-game', (id) => {
-    const g = games.get(id);
-    if (!g) {
-      socket.emit('game-error', { id, error: 'not found' });
-      return;
-    }
-    socket.join(`game:${id}`);
-    socket.emit('game-state', g.serialize());
-  });
+  socket.emit('state', match.serialize());
 });
 
-// Broadcast snapshots a few times per second.
+// Push fresh state to every connected client a few times per second.
 setInterval(() => {
-  for (const game of games.values()) {
-    io.to(`game:${game.id}`).emit('game-state', game.serialize());
-  }
-}, 150);
+  io.emit('state', match.serialize());
+}, 100);
 
-function makeGameId() {
-  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
-  let s = '';
-  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-  return s;
+function composeGameAnnounce(m, baseUrl) {
+  const url = baseUrl;
+  const mode = m.settings.mode === 'team' ? 'командный (RED vs BLUE)' : 'классика (всех против всех)';
+  return (
+`[CENTER][B][SIZE=6]:redalert: TANKZ — лайв-битва танков [SIZE=4](правый ствол кофе, выдох в монитор):pivo:[/SIZE][/SIZE][/B][/CENTER]
+
+Сайт: ${url}
+Режим: [B]${mode}[/B]
+Поле: ${m.cols} клеток в ширину (A..${String.fromCharCode(64 + m.cols)}) x ${m.rows} в высоту (1..${m.rows})
+Раунд: [B]${Math.round(m.settings.roundMs / 60000)} мин[/B], респавн ${Math.round(m.settings.respawnMs / 1000)} сек, HP ${m.settings.startingHp}
+
+[CENTER][B]Команды (пишешь прямо в эту тему):[/B][/CENTER]
+[LIST]
+[*][B]!join[/B] — выйти на поле${m.settings.mode === 'team' ? ' (или [B]!join red[/B] / [B]!join blue[/B])' : ''}
+[*][B]!goto B8[/B] — поехать в клетку B8
+[*][B]!shot A1[/B] — выстрелить в сторону клетки A1
+[*][B]!leave[/B] — увести танк с поля
+${m.settings.mode === 'classic' ? '[*][B]!color red|green|blue|black|beige[/B] — поменять цвет\n' : ''}[/LIST]
+
+[CENTER][SIZE=5]:smileforum: Заходи на ${url} — смотри лайв.:cool:[/SIZE][/CENTER]`
+  );
 }
 
 server.listen(PORT, () => {
   console.log(`[tankz] listening on http://localhost:${PORT}`);
   console.log(`[tankz] public base: ${PUBLIC_BASE_URL}`);
+  console.log(`[tankz] thread: ${match.threadId || '(none)'} ${match.threadUrl || ''}`);
 });
