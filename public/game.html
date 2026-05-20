@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tankz — live game</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="game-page">
+  <header class="game-header">
+    <a class="back" href="/">← Tankz</a>
+    <div class="game-title">
+      <span id="game-mode" class="pill"></span>
+      <span id="game-status" class="pill"></span>
+      <a id="thread-link" class="pill link" href="#" target="_blank" rel="noopener">lolz thread ↗</a>
+    </div>
+    <div id="admin-controls" class="admin-controls" hidden>
+      <button id="start-btn" class="primary">Start</button>
+      <button id="stop-btn" class="ghost">Stop</button>
+    </div>
+  </header>
+
+  <main class="board-layout">
+    <div class="board-wrap">
+      <canvas id="board" width="800" height="500"></canvas>
+      <div id="winner-overlay" class="winner-overlay" hidden></div>
+    </div>
+    <aside class="sidebar">
+      <div class="panel">
+        <h3>Players</h3>
+        <ul id="players-list" class="players-list"></ul>
+      </div>
+      <div class="panel">
+        <h3>Events</h3>
+        <ul id="events-list" class="events-list"></ul>
+      </div>
+      <div class="panel commands-panel">
+        <h3>Commands</h3>
+        <p class="muted">Post these in the lolz thread:</p>
+        <ul>
+          <li><code>!join</code></li>
+          <li><code>!goto B8</code></li>
+          <li><code>!shot A1</code></li>
+          <li><code>!leave</code></li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/game.js"></script>
+</body>
+</html>

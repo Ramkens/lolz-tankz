@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tankz — live forum tank battle</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="landing">
+  <main class="container">
+    <header class="hero">
+      <h1>Tankz</h1>
+      <p class="lede">Real-time 2D tank battle controlled by forum posts on <a href="https://lolz.live" target="_blank" rel="noopener">lolz.live</a>.</p>
+    </header>
+
+    <section class="card" id="games-card">
+      <div class="row">
+        <h2>Active games</h2>
+        <button id="refresh-games" class="ghost">Refresh</button>
+      </div>
+      <ul id="games-list" class="games-list"></ul>
+      <p id="no-games" class="muted" hidden>No games yet. Wait for the admin to create one.</p>
+    </section>
+
+    <section class="card" id="admin-card">
+      <div class="row">
+        <h2>Admin</h2>
+        <span id="admin-status" class="pill"></span>
+      </div>
+      <form id="admin-login-form" class="form">
+        <label>Admin password
+          <input type="password" name="password" required autocomplete="current-password" />
+        </label>
+        <button class="primary" type="submit">Sign in</button>
+        <p id="admin-login-error" class="error" hidden></p>
+      </form>
+      <form id="create-game-form" class="form" hidden>
+        <fieldset class="modes">
+          <label><input type="radio" name="mode" value="classic" checked /> Classic — every tank for themselves</label>
+          <label><input type="radio" name="mode" value="team" /> Teams — red vs blue (odd player → random side)</label>
+        </fieldset>
+        <label>Lolz thread (id or URL)
+          <input type="text" name="thread" placeholder="e.g. https://lolz.live/threads/9991149/" required />
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="announce" checked />
+          Auto-post game link &amp; commands to the thread
+        </label>
+        <button class="primary" type="submit">Create game</button>
+        <button type="button" class="ghost" id="admin-logout">Sign out</button>
+        <p id="create-game-error" class="error" hidden></p>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>How it works</h2>
+      <ol>
+        <li>Admin creates a game tied to a forum thread on lolz.live.</li>
+        <li>Players post commands in that thread:
+          <ul>
+            <li><code>!join</code> (or <code>!join red</code> / <code>!join blue</code> in team mode)</li>
+            <li><code>!goto B8</code> — drive to a cell</li>
+            <li><code>!shot A1</code> — fire toward a cell</li>
+            <li><code>!leave</code> — remove your tank</li>
+          </ul>
+        </li>
+        <li>Tanks appear with the player's lolz nickname and avatar.</li>
+        <li>Spectators watch the battle live on the game page.</li>
+      </ol>
+    </section>
+  </main>
+  <script src="/landing.js"></script>
+</body>
+</html>

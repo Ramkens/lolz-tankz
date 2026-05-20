@@ -1,0 +1,19 @@
+{
+  "name": "tankz-lolz",
+  "version": "1.0.0",
+  "description": "Live tank game controlled from a lolz.live forum thread",
+  "main": "server/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

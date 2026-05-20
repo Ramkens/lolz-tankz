@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: lolz-tankz
+    runtime: node
+    plan: free
+    region: oregon
+    autoDeploy: true
+    buildCommand: npm ci --omit=dev || npm install --omit=dev
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: LOLZ_API_TOKEN
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
